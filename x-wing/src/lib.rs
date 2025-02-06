@@ -325,6 +325,15 @@ pub fn generate_key_pair(rng: &mut impl CryptoRngCore) -> (DecapsulationKey, Enc
     (sk, pk)
 }
 
+/// Generate a X-Wing key pair using the provided random bytes.
+pub fn generate_key_pair_derand(
+    randomness: [u8; DECAPSULATION_KEY_SIZE],
+) -> (DecapsulationKey, EncapsulationKey) {
+    let sk = DecapsulationKey { sk: randomness };
+    let pk = sk.encapsulation_key();
+    (sk, pk)
+}
+
 fn combiner(ss_m: &[u8], ss_x: &[u8], ct_x: &[u8], pk_x: &p256::PublicKey) -> SharedSecret {
     use sha3::Digest;
 
