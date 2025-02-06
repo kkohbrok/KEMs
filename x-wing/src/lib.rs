@@ -93,7 +93,8 @@ impl EncapsulationKey {
         let ml_kem_randomness = randomness[0..MLKEM_ENCAP_RANDOMNESS_SIZE]
             .try_into()
             .unwrap();
-        let p256_randomness = randomness[MLKEM_ENCAP_RANDOMNESS_SIZE..P256_ENCAP_RANDOMNESS_SIZE]
+        let p256_randomness: [u8; P256_ENCAP_RANDOMNESS_SIZE] = randomness
+            [MLKEM_ENCAP_RANDOMNESS_SIZE..ENCAP_RANDOMNESS_SIZE]
             .try_into()
             .unwrap();
 
