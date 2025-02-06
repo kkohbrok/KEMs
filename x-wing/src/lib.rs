@@ -59,6 +59,11 @@ pub const DECAPSULATION_KEY_SIZE: usize = 32;
 /// Size in bytes of the `Ciphertext`.
 pub const CIPHERTEXT_SIZE: usize = MLKEM_CIPHERTEXT_SIZE + P256_PK_KEY_SIZE;
 
+const MLKEM_ENCAP_RANDOMNESS_SIZE: usize = 32;
+const P256_ENCAP_RANDOMNESS_SIZE: usize = 32;
+/// Size of the random bytes required for encapsulation.
+pub const ENCAP_RANDOMNESS_SIZE: usize = 64;
+
 /// Shared secret key.
 pub type SharedSecret = [u8; 32];
 
@@ -83,10 +88,14 @@ impl EncapsulationKey {
     /// Encapsulate using the given randomness.
     pub fn encapsulate_derand(
         &self,
-        randomness: [u8; 64],
+        randomness: [u8; ENCAP_RANDOMNESS_SIZE],
     ) -> Result<(Ciphertext, SharedSecret), Infallible> {
-        let ml_kem_randomness = randomness[0..32].try_into().unwrap();
-        let p256_randomness = randomness[32..64].try_into().unwrap();
+        let ml_kem_randomness = randomness[0..MLKEM_ENCAP_RANDOMNESS_SIZE]
+            .try_into()
+            .unwrap();
+        let p256_randomness = randomness[MLKEM_ENCAP_RANDOMNESS_SIZE..P256_ENCAP_RANDOMNESS_SIZE]
+            .try_into()
+            .unwrap();
 
         let (ct_m, ss_m) = self.pk_m.encapsulate_deterministic(ml_kem_randomness)?;
         let ek_x = p256_randomness;
