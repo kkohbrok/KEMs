@@ -49,12 +49,15 @@ type MlKem768EncapsulationKey = kem::EncapsulationKey<MlKem768Params>;
 
 const X_WING_LABEL: &[u8; 6] = br"\.//^\";
 
+const MLKEM_ENCAP_KEY_SIZE: usize = 1184;
+const MLKEM_CIPHERTEXT_SIZE: usize = 1088;
+const P256_PK_KEY_SIZE: usize = 65;
 /// Size in bytes of the `EncapsulationKey`.
-pub const ENCAPSULATION_KEY_SIZE: usize = 1184 + 65;
+pub const ENCAPSULATION_KEY_SIZE: usize = MLKEM_ENCAP_KEY_SIZE + P256_PK_KEY_SIZE;
 /// Size in bytes of the `DecapsulationKey`.
 pub const DECAPSULATION_KEY_SIZE: usize = 32;
 /// Size in bytes of the `Ciphertext`.
-pub const CIPHERTEXT_SIZE: usize = 1088 + 65;
+pub const CIPHERTEXT_SIZE: usize = MLKEM_CIPHERTEXT_SIZE + P256_PK_KEY_SIZE;
 
 /// Shared secret key.
 pub type SharedSecret = [u8; 32];
@@ -92,7 +95,7 @@ impl EncapsulationKey {
 
     fn encapsulate_internal(
         &self,
-        ct_m: ArrayN<u8, 1088>,
+        ct_m: ArrayN<u8, MLKEM_CIPHERTEXT_SIZE>,
         ss_m: B32,
         ek_x: SharedSecret,
     ) -> Result<(Ciphertext, SharedSecret), Infallible> {
@@ -103,9 +106,9 @@ impl EncapsulationKey {
         let ct_x_affine = ct_x_point.to_affine();
         let ct_x = ct_x_affine.to_encoded_point(false);
 
-        assert!(ct_x.as_bytes().len() == 65);
+        assert!(ct_x.as_bytes().len() == P256_PK_KEY_SIZE);
 
-        let ct_x = <[u8; 65]>::try_from(ct_x.as_bytes()).unwrap();
+        let ct_x = <[u8; P256_PK_KEY_SIZE]>::try_from(ct_x.as_bytes()).unwrap();
 
         let decoded =
             AffinePoint::from_encoded_point(&p256::EncodedPoint::from_bytes(&ct_x).unwrap())
@@ -151,20 +154,21 @@ impl EncapsulationKey {
     #[must_use]
     pub fn as_bytes(&self) -> [u8; ENCAPSULATION_KEY_SIZE] {
         let mut buffer = [0u8; ENCAPSULATION_KEY_SIZE];
-        buffer[0..1184].copy_from_slice(&self.pk_m.as_bytes());
-        buffer[1184..1216].copy_from_slice(self.pk_x.to_encoded_point(false).as_bytes());
+        buffer[0..MLKEM_ENCAP_KEY_SIZE].copy_from_slice(&self.pk_m.as_bytes());
+        buffer[MLKEM_ENCAP_KEY_SIZE..ENCAPSULATION_KEY_SIZE]
+            .copy_from_slice(self.pk_x.to_encoded_point(false).as_bytes());
         buffer
     }
 }
 
 impl From<&[u8; ENCAPSULATION_KEY_SIZE]> for EncapsulationKey {
     fn from(value: &[u8; ENCAPSULATION_KEY_SIZE]) -> Self {
-        let mut pk_m = [0; 1184];
-        pk_m.copy_from_slice(&value[0..1184]);
+        let mut pk_m = [0; MLKEM_ENCAP_KEY_SIZE];
+        pk_m.copy_from_slice(&value[0..MLKEM_ENCAP_KEY_SIZE]);
         let pk_m = MlKem768EncapsulationKey::from_bytes(&pk_m.into());
 
-        let mut pk_x = [0; 65];
-        pk_x.copy_from_slice(&value[1184..]);
+        let mut pk_x = [0; P256_PK_KEY_SIZE];
+        pk_x.copy_from_slice(&value[MLKEM_ENCAP_KEY_SIZE..]);
         let pk_x = PublicKey::from_sec1_bytes(&pk_x).unwrap();
         EncapsulationKey { pk_m, pk_x }
     }
@@ -282,8 +286,8 @@ impl From<[u8; DECAPSULATION_KEY_SIZE]> for DecapsulationKey {
 #[derive(Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "zeroize", derive(Zeroize, ZeroizeOnDrop))]
 pub struct Ciphertext {
-    ct_m: ArrayN<u8, 1088>,
-    ct_x: [u8; 65],
+    ct_m: ArrayN<u8, MLKEM_CIPHERTEXT_SIZE>,
+    ct_x: [u8; P256_PK_KEY_SIZE],
 }
 
 impl Ciphertext {
@@ -292,18 +296,18 @@ impl Ciphertext {
     #[must_use]
     pub fn as_bytes(&self) -> [u8; CIPHERTEXT_SIZE] {
         let mut buffer = [0; CIPHERTEXT_SIZE];
-        buffer[0..1088].copy_from_slice(&self.ct_m);
-        buffer[1088..].copy_from_slice(&self.ct_x);
+        buffer[0..MLKEM_CIPHERTEXT_SIZE].copy_from_slice(&self.ct_m);
+        buffer[MLKEM_CIPHERTEXT_SIZE..].copy_from_slice(&self.ct_x);
         buffer
     }
 }
 
 impl From<&[u8; CIPHERTEXT_SIZE]> for Ciphertext {
     fn from(value: &[u8; CIPHERTEXT_SIZE]) -> Self {
-        let mut ct_m = [0; 1088];
-        ct_m.copy_from_slice(&value[0..1088]);
-        let mut ct_x = [0; 65];
-        ct_x.copy_from_slice(&value[1088..]);
+        let mut ct_m = [0; MLKEM_CIPHERTEXT_SIZE];
+        ct_m.copy_from_slice(&value[0..MLKEM_CIPHERTEXT_SIZE]);
+        let mut ct_x = [0; P256_PK_KEY_SIZE];
+        ct_x.copy_from_slice(&value[MLKEM_CIPHERTEXT_SIZE..]);
 
         Ciphertext {
             ct_m: ct_m.into(),
