@@ -29,7 +29,9 @@ use core::convert::Infallible;
 
 use kem::{Decapsulate, Encapsulate};
 use ml_kem::array::ArrayN;
-use ml_kem::{kem, EncodedSizeUser, KemCore, MlKem768, MlKem768Params};
+use ml_kem::{
+    kem, EncapsulateDeterministic, EncodedSizeUser, KemCore, MlKem768, MlKem768Params, B32,
+};
 use p256::elliptic_curve::sec1::{FromEncodedPoint, ToEncodedPoint};
 use p256::elliptic_curve::{NonZeroScalar, PublicKey};
 use p256::{AffinePoint, NistP256, ProjectivePoint, U256};
@@ -74,17 +76,26 @@ pub struct EncapsulationKey {
     pk_x: p256::PublicKey,
 }
 
-impl Encapsulate<Ciphertext, SharedSecret> for EncapsulationKey {
-    type Error = Infallible;
-
-    fn encapsulate(
+impl EncapsulationKey {
+    /// Encapsulate using the given randomness.
+    pub fn encapsulate_derand(
         &self,
-        rng: &mut impl CryptoRngCore,
-    ) -> Result<(Ciphertext, SharedSecret), Self::Error> {
-        // Swapped order of operations compared to RFC, so that usage of the rng matches the RFC
-        let (ct_m, ss_m) = self.pk_m.encapsulate(rng)?;
+        randomness: [u8; 64],
+    ) -> Result<(Ciphertext, SharedSecret), Infallible> {
+        let ml_kem_randomness = randomness[0..32].try_into().unwrap();
+        let p256_randomness = randomness[32..64].try_into().unwrap();
 
-        let ek_x: SharedSecret = generate(rng);
+        let (ct_m, ss_m) = self.pk_m.encapsulate_deterministic(ml_kem_randomness)?;
+        let ek_x = p256_randomness;
+        self.encapsulate_internal(ct_m, ss_m, ek_x)
+    }
+
+    fn encapsulate_internal(
+        &self,
+        ct_m: ArrayN<u8, 1088>,
+        ss_m: B32,
+        ek_x: SharedSecret,
+    ) -> Result<(Ciphertext, SharedSecret), Infallible> {
         let u_256 = U256::from_be_slice(&ek_x);
         let ek_x_scalar = NonZeroScalar::<NistP256>::from_uint(u_256).unwrap();
 
@@ -116,6 +127,21 @@ impl Encapsulate<Ciphertext, SharedSecret> for EncapsulationKey {
 
         let ct = Ciphertext { ct_m, ct_x };
         Ok((ct, ss))
+    }
+}
+
+impl Encapsulate<Ciphertext, SharedSecret> for EncapsulationKey {
+    type Error = Infallible;
+
+    fn encapsulate(
+        &self,
+        rng: &mut impl CryptoRngCore,
+    ) -> Result<(Ciphertext, SharedSecret), Self::Error> {
+        // Swapped order of operations compared to RFC, so that usage of the rng matches the RFC
+        let (ct_m, ss_m) = self.pk_m.encapsulate(rng)?;
+
+        let ek_x: SharedSecret = generate(rng);
+        self.encapsulate_internal(ct_m, ss_m, ek_x)
     }
 }
 
