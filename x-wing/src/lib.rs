@@ -13,7 +13,7 @@
 //! This crate implements the X-Wing Key Encapsulation Method (X-Wing-KEM) algorithm.
 //! X-Wing-KEM is a KEM in the sense that it creates an (decapsulation key, encapsulation key) pair,
 //! such that anyone can use the encapsulation key to establish a shared key with the holder of the
-//! decapsulation key. X-Wing-KEM is a general-purpose hybrid post-quantum KEM, combining x25519 and ML-KEM-768.
+//! decapsulation key. X-Wing-KEM is a general-purpose hybrid post-quantum KEM, combining p384 and ML-KEM-1024.
 //!
 //! ```
 //! use kem::{Decapsulate, Encapsulate};
@@ -30,11 +30,11 @@ use core::convert::Infallible;
 use kem::{Decapsulate, Encapsulate};
 use ml_kem::array::ArrayN;
 use ml_kem::{
-    kem, EncapsulateDeterministic, EncodedSizeUser, KemCore, MlKem768, MlKem768Params, B32,
+    kem, EncapsulateDeterministic, EncodedSizeUser, KemCore, MlKem1024, MlKem1024Params, B32,
 };
-use p256::elliptic_curve::sec1::{FromEncodedPoint, ToEncodedPoint};
-use p256::elliptic_curve::{NonZeroScalar, PublicKey};
-use p256::{AffinePoint, NistP256, ProjectivePoint, U256};
+use p384::elliptic_curve::sec1::{FromEncodedPoint, ToEncodedPoint};
+use p384::elliptic_curve::{NonZeroScalar, PublicKey};
+use p384::{AffinePoint, NistP384, ProjectivePoint, U384};
 use rand_core::CryptoRngCore;
 #[cfg(feature = "getrandom")]
 use rand_core::OsRng;
@@ -44,25 +44,26 @@ use sha3::{Sha3_256, Shake256, Shake256ReaderCore};
 #[cfg(feature = "zeroize")]
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
-type MlKem768DecapsulationKey = kem::DecapsulationKey<MlKem768Params>;
-type MlKem768EncapsulationKey = kem::EncapsulationKey<MlKem768Params>;
+type MlKem1024DecapsulationKey = kem::DecapsulationKey<MlKem1024Params>;
+type MlKem1024EncapsulationKey = kem::EncapsulationKey<MlKem1024Params>;
 
 const X_WING_LABEL: &[u8; 6] = br"\.//^\";
 
-const MLKEM_ENCAP_KEY_SIZE: usize = 1184;
-const MLKEM_CIPHERTEXT_SIZE: usize = 1088;
-const P256_PK_KEY_SIZE: usize = 65;
+const MLKEM_ENCAP_KEY_SIZE: usize = 1568;
+const MLKEM_CIPHERTEXT_SIZE: usize = MLKEM_ENCAP_KEY_SIZE;
+const P384_PK_KEY_SIZE: usize = 97;
+const P384_SK_KEY_SIZE: usize = 48;
 /// Size in bytes of the `EncapsulationKey`.
-pub const ENCAPSULATION_KEY_SIZE: usize = MLKEM_ENCAP_KEY_SIZE + P256_PK_KEY_SIZE;
+pub const ENCAPSULATION_KEY_SIZE: usize = MLKEM_ENCAP_KEY_SIZE + P384_PK_KEY_SIZE;
 /// Size in bytes of the `DecapsulationKey`.
 pub const DECAPSULATION_KEY_SIZE: usize = 32;
 /// Size in bytes of the `Ciphertext`.
-pub const CIPHERTEXT_SIZE: usize = MLKEM_CIPHERTEXT_SIZE + P256_PK_KEY_SIZE;
+pub const CIPHERTEXT_SIZE: usize = MLKEM_CIPHERTEXT_SIZE + P384_PK_KEY_SIZE;
 
 const MLKEM_ENCAP_RANDOMNESS_SIZE: usize = 32;
-const P256_ENCAP_RANDOMNESS_SIZE: usize = 32;
+const P384_ENCAP_RANDOMNESS_SIZE: usize = 32;
 /// Size of the random bytes required for encapsulation.
-pub const ENCAP_RANDOMNESS_SIZE: usize = 64;
+pub const ENCAP_RANDOMNESS_SIZE: usize = MLKEM_ENCAP_RANDOMNESS_SIZE + P384_ENCAP_RANDOMNESS_SIZE;
 
 /// Shared secret key.
 pub type SharedSecret = [u8; 32];
@@ -80,8 +81,8 @@ pub type SharedSecret = [u8; 32];
 /// X-Wing encapsulation or public key.
 #[derive(Clone, PartialEq)]
 pub struct EncapsulationKey {
-    pk_m: MlKem768EncapsulationKey,
-    pk_x: p256::PublicKey,
+    pk_m: MlKem1024EncapsulationKey,
+    pk_x: p384::PublicKey,
 }
 
 impl EncapsulationKey {
@@ -93,13 +94,13 @@ impl EncapsulationKey {
         let ml_kem_randomness = randomness[0..MLKEM_ENCAP_RANDOMNESS_SIZE]
             .try_into()
             .unwrap();
-        let p256_randomness: [u8; P256_ENCAP_RANDOMNESS_SIZE] = randomness
+        let p384_randomness: [u8; P384_ENCAP_RANDOMNESS_SIZE] = randomness
             [MLKEM_ENCAP_RANDOMNESS_SIZE..ENCAP_RANDOMNESS_SIZE]
             .try_into()
             .unwrap();
 
         let (ct_m, ss_m) = self.pk_m.encapsulate_deterministic(ml_kem_randomness)?;
-        let ek_x = p256_randomness;
+        let ek_x = p384_randomness;
         self.encapsulate_internal(ct_m, ss_m, ek_x)
     }
 
@@ -109,19 +110,18 @@ impl EncapsulationKey {
         ss_m: B32,
         ek_x: SharedSecret,
     ) -> Result<(Ciphertext, SharedSecret), Infallible> {
-        let u_256 = U256::from_be_slice(&ek_x);
-        let ek_x_scalar = NonZeroScalar::<NistP256>::from_uint(u_256).unwrap();
+        let ek_x_scalar = derive_p384_scalar(&ek_x);
 
         let ct_x_point = ProjectivePoint::GENERATOR * *ek_x_scalar;
         let ct_x_affine = ct_x_point.to_affine();
         let ct_x = ct_x_affine.to_encoded_point(false);
 
-        assert!(ct_x.as_bytes().len() == P256_PK_KEY_SIZE);
+        assert!(ct_x.as_bytes().len() == P384_PK_KEY_SIZE);
 
-        let ct_x = <[u8; P256_PK_KEY_SIZE]>::try_from(ct_x.as_bytes()).unwrap();
+        let ct_x = <[u8; P384_PK_KEY_SIZE]>::try_from(ct_x.as_bytes()).unwrap();
 
         let decoded =
-            AffinePoint::from_encoded_point(&p256::EncodedPoint::from_bytes(&ct_x).unwrap())
+            AffinePoint::from_encoded_point(&p384::EncodedPoint::from_bytes(&ct_x).unwrap())
                 .into_option();
         assert!(decoded.is_some(), "Failed to decode ct_x");
 
@@ -160,7 +160,7 @@ impl Encapsulate<Ciphertext, SharedSecret> for EncapsulationKey {
 
 impl EncapsulationKey {
     /// Convert the key to the following format:
-    /// ML-KEM-768 public key(1184 bytes) | X25519 public key(32 bytes).
+    /// ML-KEM-1024 public key(1184 bytes) | X25519 public key(32 bytes).
     #[must_use]
     pub fn as_bytes(&self) -> [u8; ENCAPSULATION_KEY_SIZE] {
         let mut buffer = [0u8; ENCAPSULATION_KEY_SIZE];
@@ -175,9 +175,9 @@ impl From<&[u8; ENCAPSULATION_KEY_SIZE]> for EncapsulationKey {
     fn from(value: &[u8; ENCAPSULATION_KEY_SIZE]) -> Self {
         let mut pk_m = [0; MLKEM_ENCAP_KEY_SIZE];
         pk_m.copy_from_slice(&value[0..MLKEM_ENCAP_KEY_SIZE]);
-        let pk_m = MlKem768EncapsulationKey::from_bytes(&pk_m.into());
+        let pk_m = MlKem1024EncapsulationKey::from_bytes(&pk_m.into());
 
-        let mut pk_x = [0; P256_PK_KEY_SIZE];
+        let mut pk_x = [0; P384_PK_KEY_SIZE];
         pk_x.copy_from_slice(&value[MLKEM_ENCAP_KEY_SIZE..]);
         let pk_x = PublicKey::from_sec1_bytes(&pk_x).unwrap();
         EncapsulationKey { pk_m, pk_x }
@@ -201,7 +201,7 @@ impl Decapsulate<Ciphertext, SharedSecret> for DecapsulationKey {
         let ss_m = sk_m.decapsulate(&ct.ct_m)?;
 
         let received_ct_x =
-            AffinePoint::from_encoded_point(&p256::EncodedPoint::from_bytes(&ct.ct_x).unwrap())
+            AffinePoint::from_encoded_point(&p384::EncodedPoint::from_bytes(&ct.ct_x).unwrap())
                 .unwrap();
 
         let sk_x_scalar = sk_x.to_nonzero_scalar();
@@ -248,10 +248,10 @@ impl DecapsulationKey {
     fn expand_key(
         &self,
     ) -> (
-        MlKem768DecapsulationKey,
-        p256::SecretKey,
-        MlKem768EncapsulationKey,
-        p256::PublicKey,
+        MlKem1024DecapsulationKey,
+        p384::SecretKey,
+        MlKem1024EncapsulationKey,
+        p384::PublicKey,
     ) {
         use sha3::digest::Update;
         let mut shaker = Shake256::default();
@@ -260,11 +260,11 @@ impl DecapsulationKey {
 
         let d = read_from(&mut expanded).into();
         let z = read_from(&mut expanded).into();
-        let (sk_m, pk_m) = MlKem768::generate_deterministic(&d, &z);
+        let (sk_m, pk_m) = MlKem1024::generate_deterministic(&d, &z);
 
-        let sk_x: [u8; 32] = read_from(&mut expanded);
-        let sk_x = NonZeroScalar::<NistP256>::from_uint(U256::from_be_slice(&sk_x)).unwrap();
-        let sk_x = p256::SecretKey::from(sk_x);
+        let sk_x: [u8; P384_SK_KEY_SIZE] = read_from(&mut expanded);
+        let sk_x = NonZeroScalar::<NistP384>::from_uint(U384::from_be_slice(&sk_x)).unwrap();
+        let sk_x = p384::SecretKey::from(sk_x);
         let pk_x = sk_x.public_key();
 
         #[cfg(test)]
@@ -297,12 +297,12 @@ impl From<[u8; DECAPSULATION_KEY_SIZE]> for DecapsulationKey {
 #[cfg_attr(feature = "zeroize", derive(Zeroize, ZeroizeOnDrop))]
 pub struct Ciphertext {
     ct_m: ArrayN<u8, MLKEM_CIPHERTEXT_SIZE>,
-    ct_x: [u8; P256_PK_KEY_SIZE],
+    ct_x: [u8; P384_PK_KEY_SIZE],
 }
 
 impl Ciphertext {
     /// Convert the ciphertext to the following format:
-    /// ML-KEM-768 ciphertext(1088 bytes) | p256 ciphertext(32 bytes).
+    /// ML-KEM-1024 ciphertext(1568 bytes) | p384 ciphertext(97 bytes).
     #[must_use]
     pub fn as_bytes(&self) -> [u8; CIPHERTEXT_SIZE] {
         let mut buffer = [0; CIPHERTEXT_SIZE];
@@ -316,7 +316,7 @@ impl From<&[u8; CIPHERTEXT_SIZE]> for Ciphertext {
     fn from(value: &[u8; CIPHERTEXT_SIZE]) -> Self {
         let mut ct_m = [0; MLKEM_CIPHERTEXT_SIZE];
         ct_m.copy_from_slice(&value[0..MLKEM_CIPHERTEXT_SIZE]);
-        let mut ct_x = [0; P256_PK_KEY_SIZE];
+        let mut ct_x = [0; P384_PK_KEY_SIZE];
         ct_x.copy_from_slice(&value[MLKEM_CIPHERTEXT_SIZE..]);
 
         Ciphertext {
@@ -348,7 +348,20 @@ pub fn generate_key_pair_derand(
     (sk, pk)
 }
 
-fn combiner(ss_m: &[u8], ss_x: &[u8], ct_x: &[u8], pk_x: &p256::PublicKey) -> SharedSecret {
+fn derive_p384_scalar(ek_x: &[u8; 32]) -> NonZeroScalar<NistP384> {
+    use sha3::digest::Update;
+    let mut hasher = Shake256::default();
+    hasher.update(ek_x);
+    let mut reader = hasher.finalize_xof();
+
+    let mut expanded = [0u8; 48];
+    reader.read(&mut expanded);
+
+    let u_384 = U384::from_be_slice(&expanded);
+    NonZeroScalar::<NistP384>::from_uint(u_384).unwrap()
+}
+
+fn combiner(ss_m: &[u8], ss_x: &[u8], ct_x: &[u8], pk_x: &p384::PublicKey) -> SharedSecret {
     use sha3::Digest;
 
     let mut hasher = Sha3_256::new();

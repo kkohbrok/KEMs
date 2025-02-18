@@ -18,7 +18,8 @@ zeroize = ["dep:zeroize", "ml-kem/zeroize"]
 
 [dependencies]
 rand_core = { version = "0.6", default-features = false }
-p256 = { version = "0.13.2", default-features = false, features = ["ecdh"] }
+p384 = { version = "0.13.1", default-features = false, features = ["ecdh"] }
+#p256 = { version = "0.13.2", default-features = false, features = ["ecdh"] }
 ml-kem = { version = "=0.3.0-pre", default-features = false, features = [
     "deterministic",
 ], path = "../ml-kem" }
