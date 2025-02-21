@@ -40,7 +40,7 @@ use rand_core::CryptoRngCore;
 use rand_core::OsRng;
 use sha3::digest::core_api::XofReaderCoreWrapper;
 use sha3::digest::{ExtendableOutput, XofReader};
-use sha3::{Sha3_256, Shake256, Shake256ReaderCore};
+use sha3::{Sha3_384, Shake256, Shake256ReaderCore};
 #[cfg(feature = "zeroize")]
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
@@ -56,17 +56,17 @@ const P384_SK_KEY_SIZE: usize = 48;
 /// Size in bytes of the `EncapsulationKey`.
 pub const ENCAPSULATION_KEY_SIZE: usize = MLKEM_ENCAP_KEY_SIZE + P384_PK_KEY_SIZE;
 /// Size in bytes of the `DecapsulationKey`.
-pub const DECAPSULATION_KEY_SIZE: usize = 32;
+pub const DECAPSULATION_KEY_SIZE: usize = 64;
 /// Size in bytes of the `Ciphertext`.
 pub const CIPHERTEXT_SIZE: usize = MLKEM_CIPHERTEXT_SIZE + P384_PK_KEY_SIZE;
 
 const MLKEM_ENCAP_RANDOMNESS_SIZE: usize = 32;
-const P384_ENCAP_RANDOMNESS_SIZE: usize = 32;
+const P384_ENCAP_RANDOMNESS_SIZE: usize = 48;
 /// Size of the random bytes required for encapsulation.
 pub const ENCAP_RANDOMNESS_SIZE: usize = MLKEM_ENCAP_RANDOMNESS_SIZE + P384_ENCAP_RANDOMNESS_SIZE;
 
 /// Shared secret key.
-pub type SharedSecret = [u8; 32];
+pub type SharedSecret = [u8; 48];
 
 // The naming convention of variables matches the RFC.
 // ss -> Shared Secret
@@ -348,7 +348,7 @@ pub fn generate_key_pair_derand(
     (sk, pk)
 }
 
-fn derive_p384_scalar(ek_x: &[u8; 32]) -> NonZeroScalar<NistP384> {
+fn derive_p384_scalar(ek_x: &[u8; 48]) -> NonZeroScalar<NistP384> {
     use sha3::digest::Update;
     let mut hasher = Shake256::default();
     hasher.update(ek_x);
@@ -364,7 +364,7 @@ fn derive_p384_scalar(ek_x: &[u8; 32]) -> NonZeroScalar<NistP384> {
 fn combiner(ss_m: &[u8], ss_x: &[u8], ct_x: &[u8], pk_x: &p384::PublicKey) -> SharedSecret {
     use sha3::Digest;
 
-    let mut hasher = Sha3_256::new();
+    let mut hasher = Sha3_384::new();
     hasher.update(ss_m);
     hasher.update(ss_x);
     hasher.update(ct_x);
